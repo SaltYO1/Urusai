@@ -395,15 +395,61 @@ function mascotSVG(mood = 'happy') {
 
 /* ---------- storage ---------- */
 const DEF = () => ({ chips: 0, earned: 0, streak: { last: null, n: 0 }, day: { d: null, n: 0 }, kana: {}, games: {}, lessons: {}, stickers: [], hg: [0, 1], kg: [0, 1], settings: { sound: true, voice: true }, created: Date.now() });
+const clone = o => JSON.parse(JSON.stringify(o));
+/* merge two progress snapshots without ever losing chips, stickers or learning.
+   mode 'delta': cur = what storage has now, base = what this window loaded, mine = this window's state
+   mode 'max'  : cur = this device, mine = imported code (another device) */
+function mergeProgress(cur, base, mine, mode) {
+  cur = Object.assign(DEF(), cur || {}); mine = Object.assign(DEF(), mine || {}); base = Object.assign(DEF(), base || {});
+  const out = clone(cur);
+  if (mode === 'delta') {
+    out.chips = Math.max(0, cur.chips + (mine.chips - base.chips));
+    out.earned = cur.earned + Math.max(0, mine.earned - base.earned);
+  } else { out.chips = Math.max(cur.chips, mine.chips); out.earned = Math.max(cur.earned, mine.earned); }
+  out.stickers = uniq((cur.stickers || []).concat(mine.stickers || []));
+  // spent chips on a sticker bought here but already bought elsewhere -> refund is not needed: union keeps both purchases
+  out.lessons = Object.assign({}, cur.lessons, mine.lessons);
+  out.games = clone(cur.games || {});
+  Object.entries(mine.games || {}).forEach(([k, g]) => { const c = out.games[k] || { best: 0, plays: 0 }; out.games[k] = { best: Math.max(c.best || 0, g.best || 0), plays: Math.max(c.plays || 0, g.plays || 0) }; });
+  out.kana = clone(cur.kana || {});
+  Object.entries(mine.kana || {}).forEach(([k, v]) => { const c = out.kana[k]; if (!c || (v.c + v.w) > (c.c + c.w)) out.kana[k] = v; });
+  const later = (x, y) => { const t = s => { if (!s) return 0; const [Y, M, D] = s.split('-').map(Number); return new Date(Y, M - 1, D).getTime(); }; return t(x) >= t(y); };
+  out.streak = later(mine.streak.last, cur.streak.last) ? (mine.streak.last === cur.streak.last ? { last: mine.streak.last, n: Math.max(mine.streak.n, cur.streak.n) } : mine.streak) : cur.streak;
+  if (mine.day.d === cur.day.d) out.day = { d: cur.day.d, n: mode === 'delta' && base.day.d === mine.day.d ? cur.day.n + Math.max(0, mine.day.n - base.day.n) : Math.max(cur.day.n, mine.day.n) };
+  else out.day = later(mine.day.d, cur.day.d) ? mine.day : cur.day;
+  out.settings = Object.assign({}, cur.settings, mine.settings);
+  out.hg = mine.hg || cur.hg; out.kg = mine.kg || cur.kg;
+  out.created = Math.min(cur.created || Date.now(), mine.created || Date.now());
+  return out;
+}
 const Store = {
-  key: 'urusai.v1', d: null,
+  key: 'urusai.v1', d: null, base: null,
+  read() { let raw = null; try { raw = localStorage.getItem(this.key); } catch (e) { } try { return raw ? JSON.parse(raw) : null; } catch (e) { return null; } },
   load() {
-    let raw = null;
-    try { raw = localStorage.getItem(this.key); } catch (e) { }
-    try { this.d = Object.assign(DEF(), raw ? JSON.parse(raw) : {}); } catch (e) { this.d = DEF(); }
+    const got = this.read();
+    this.d = Object.assign(DEF(), got || {});
     this.d.settings = Object.assign(DEF().settings, this.d.settings || {});
+    this.base = clone(this.d);
   },
-  save() { try { localStorage.setItem(this.key, JSON.stringify(this.d)); } catch (e) { } },
+  // never blindly overwrite: if another window/tab saved meanwhile, merge our changes into theirs
+  save() {
+    const now = this.read();
+    if (now && JSON.stringify(now) !== JSON.stringify(this.base)) this.d = mergeProgress(now, this.base, this.d, 'delta');
+    this.d.rev = (this.d.rev || 0) + 1;
+    try { localStorage.setItem(this.key, JSON.stringify(this.d)); } catch (e) { }
+    this.base = clone(this.d);
+  },
+  // replace everything on purpose (reset)
+  replace(d) { this.d = Object.assign(DEF(), d); this.d.rev = ((this.read() || {}).rev || 0) + 1; try { localStorage.setItem(this.key, JSON.stringify(this.d)); } catch (e) { } this.base = clone(this.d); },
+  // pick up changes made in another window
+  sync() {
+    const now = this.read(); if (!now || JSON.stringify(now) === JSON.stringify(this.base)) return false;
+    const dirty = JSON.stringify(this.d) !== JSON.stringify(this.base);
+    this.d = dirty ? mergeProgress(now, this.base, this.d, 'delta') : Object.assign(DEF(), now);
+    this.d.settings = Object.assign(DEF().settings, this.d.settings || {});
+    if (dirty) { try { localStorage.setItem(this.key, JSON.stringify(this.d)); } catch (e) { } }
+    this.base = clone(this.d); return true;
+  },
 };
 Store.load();
 const S = () => Store.d;
@@ -2775,9 +2821,9 @@ const App = {
         <div><b>Тема</b><div class="tabs" style="margin-top:6px">${[['system', 'Как в телефоне'], ['light', 'Светлая'], ['dark', 'Тёмная']].map(t => `<button class="${theme === t[0] ? 'on' : ''}" data-theme="${t[0]}">${t[1]}</button>`).join('')}</div></div>
       </div>
       <div class="card stack"><h2 style="font-size:20px">Резервная копия</h2>
-        <p class="small" style="font-weight:700;margin:0">Прогресс хранится на этом телефоне. Чтобы перенести его на другое устройство (или подстраховаться), скопируй код и сохрани, например, в заметках.</p>
+        <p class="small" style="font-weight:700;margin:0">Прогресс хранится на этом телефоне. Чтобы перенести его на другое устройство (или подстраховаться), скопируй код и сохрани, например, в заметках. При загрузке кода прогресс <b>объединяется</b>: берётся лучшее с обоих устройств, ничего не стирается.</p>
         <textarea id="bk" rows="3" style="width:100%;border-radius:14px;border:2px solid var(--line);background:var(--bg);color:var(--ink);padding:10px;font:12px monospace" aria-label="Код прогресса"></textarea>
-        <div class="row"><button class="btn sm" id="bkCopy" style="--c:var(--blue)">Скопировать мой код</button><button class="btn sm ghost" id="bkLoad">Загрузить код из поля</button></div></div>
+        <div class="row"><button class="btn sm" id="bkCopy" style="--c:var(--blue)">Скопировать мой код</button><button class="btn sm ghost" id="bkLoad">Добавить прогресс из кода</button></div></div>
       <div class="card stack"><h2 style="font-size:20px">Начать заново</h2><div id="resetBox"><button class="btn sm ghost" id="reset">Стереть весь прогресс</button></div></div>
       <p class="small muted" style="text-align:center;font-weight:700">Данные о порядке черт — KanjiVG (CC BY-SA 3.0, Ulrich Apel).</p></div>`;
     $('#setSound').onchange = e => { st.sound = e.target.checked; Store.save(); };
@@ -2786,8 +2832,8 @@ const App = {
     $$('[data-theme]', m).forEach(b => b.onclick = () => { try { localStorage.setItem('urusai.theme', b.dataset.theme); } catch (e) { } this.applyTheme(); this.settingsPage(m); });
     const bk = $('#bk'); bk.value = btoa(unescape(encodeURIComponent(JSON.stringify(S()))));
     $('#bkCopy').onclick = () => { bk.select(); (navigator.clipboard ? navigator.clipboard.writeText(bk.value) : Promise.reject()).then(() => toast('Код скопирован'), () => { bk.select(); toast('Выдели текст и скопируй вручную'); }); };
-    $('#bkLoad').onclick = () => { try { const d = JSON.parse(decodeURIComponent(escape(atob(bk.value.trim())))); if (typeof d.chips !== 'number') throw 0; Store.d = Object.assign(DEF(), d); Store.save(); renderChips(); toast('Прогресс загружен!'); this.settingsPage(m); } catch (e) { toast('Код не подошёл — проверь, что скопирован целиком'); } };
-    $('#reset').onclick = () => { $('#resetBox').innerHTML = `<p style="font-weight:800;margin:0 0 8px">Точно стереть все чипси, звёзды и наклейки?</p><div class="row"><button class="btn sm" style="--c:var(--bad)" id="resetYes">Да, стереть</button><button class="btn sm ghost" id="resetNo">Нет, оставить</button></div>`; $('#resetNo').onclick = () => this.settingsPage(m); $('#resetYes').onclick = () => { Store.d = DEF(); Store.save(); renderChips(); toast('Всё начинается заново!'); this.settingsPage(m); }; };
+    $('#bkLoad').onclick = () => { try { const d = JSON.parse(decodeURIComponent(escape(atob(bk.value.trim())))); if (typeof d.chips !== 'number') throw 0; Store.replace(mergeProgress(Store.d, null, d, 'max')); renderChips(); toast('Готово! Прогресс объединён — ничего не потерялось'); this.settingsPage(m); } catch (e) { toast('Код не подошёл — проверь, что скопирован целиком'); } };
+    $('#reset').onclick = () => { $('#resetBox').innerHTML = `<p style="font-weight:800;margin:0 0 8px">Точно стереть все чипси, звёзды и наклейки?</p><div class="row"><button class="btn sm" style="--c:var(--bad)" id="resetYes">Да, стереть</button><button class="btn sm ghost" id="resetNo">Нет, оставить</button></div>`; $('#resetNo').onclick = () => this.settingsPage(m); $('#resetYes').onclick = () => { Store.replace(DEF()); renderChips(); toast('Всё начинается заново!'); this.settingsPage(m); }; };
   },
   applyTheme() {
     let t = 'system'; try { t = localStorage.getItem('urusai.theme') || 'system'; } catch (e) { }
@@ -2839,6 +2885,11 @@ window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); Instal
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) { try { navigator.serviceWorker.register('sw.js').catch(() => { }); } catch (e) { } }
 
 App.init();
+/* another window (installed app, old tab, preview) saved progress -> refresh ours instead of overwriting it later */
+window.addEventListener('storage', e => { if (e.key === Store.key && Store.sync()) { renderChips(); if (!Game.cur) App.refresh(); } });
+const resync = () => { if (Store.sync()) { renderChips(); if (!Game.cur) App.refresh(); } };
+document.addEventListener('visibilitychange', () => { if (!document.hidden) resync(); });
+window.addEventListener('focus', resync); window.addEventListener('pageshow', resync);
 
 </script>
 </body></html>
