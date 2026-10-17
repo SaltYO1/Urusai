@@ -43,7 +43,9 @@ button{font:inherit;color:inherit}
 .jp{font-family:var(--f-jp)}
 h1,h2,h3{text-wrap:balance;margin:0;line-height:1.2}
 ruby{ruby-position:over}
-rt{font-family:var(--f-jp);font-size:.5em;font-weight:700;color:var(--muted);letter-spacing:0}
+rt{font-family:var(--f-jp);font-size:.5em;font-weight:700;color:inherit;opacity:.78;letter-spacing:0;white-space:nowrap}
+ruby{ruby-align:center}
+.nw{white-space:nowrap}
 :focus-visible{outline:3px solid var(--blue);outline-offset:2px;border-radius:10px}
 
 /* ---------- top bar ---------- */
@@ -296,7 +298,7 @@ table.t td.hi{background:var(--pink-s);color:var(--pink)}
 .stickers{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px}
 .stk{border:0;background:var(--card);border-radius:22px;padding:12px 6px;display:flex;flex-direction:column;align-items:center;gap:2px;box-shadow:var(--shadow);cursor:pointer}
 .stk .e{font-size:46px;line-height:1.1;width:72px;height:72px;display:grid;place-items:center;border-radius:50%;background:var(--bg2);border:4px solid #fff}
-.stk.locked .e{filter:grayscale(1) opacity(.45)}
+.stk.locked .e{filter:saturate(.55);opacity:.8}
 .stk b{font-family:var(--f-jp);font-size:16px;line-height:1.8}
 .stk small{font-weight:900;font-size:13px;display:flex;align-items:center;gap:3px}
 .stk small svg{width:22px;height:22px}
@@ -319,6 +321,23 @@ table.t td.hi{background:var(--pink-s);color:var(--pink)}
   .band h1{font-size:24px}
 }
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+
+/* small phones: keep the header on one line */
+.logo b{white-space:nowrap}
+@media (max-width:400px){
+  .logo small{display:none}
+  .logo b{font-size:23px}
+  .chipsbadge small{display:none}
+  .top{gap:8px}
+  .msg{max-width:100%}
+  .msg .av{width:34px;height:34px;font-size:20px}
+  .msg .bubble{padding:8px 12px}
+}
+
+.stk{position:relative}
+.stk .e svg{width:62px;height:62px;display:block}
+.stk .nick{font-weight:900;font-size:14px;color:var(--pink);line-height:1.2}
+.stk-new{position:absolute;top:8px;right:8px;background:var(--pink);color:#fff;font-weight:900;font-size:11px;border-radius:999px;padding:1px 7px;letter-spacing:.03em}
 </style>
 <div id="app"></div>
 <script>
@@ -503,6 +522,7 @@ const isKana = c => /[ぁ-ゟ゠-ヿ]/.test(c);
    token{gloss} overrides the dictionary gloss;  _ = blank             */
 const PUNCT = /^[。、？！?!「」・〜…]+$/;
 function ruby(s, r) {
+  const yen = s.match(/^([0-9０-９,]+)円$/); if (yen) return esc(yen[1]) + '<ruby>円<rt>えん</rt></ruby>';
   if (!r || (!hasKanji(s) && !/[0-9０-９]/.test(s))) return esc(s);
   let pre = '', post = '';
   while (s.length > 1 && r.length > 1 && isKana(s[s.length - 1]) && s[s.length - 1] === r[r.length - 1]) { post = s[s.length - 1] + post; s = s.slice(0, -1); r = r.slice(0, -1); }
@@ -534,12 +554,17 @@ function tokHTML(t, opt = {}) {
   return `<span class="${cls}" data-s="${esc(p.s)}" data-r="${esc(r || '')}" data-g="${esc(g)}" data-n="${esc(n)}">${ruby(p.s, r)}</span>`;
 }
 function J(m, opt) {
-  return '<span class="jp">' + String(m).trim().split(/\s+/).map(t => {
-    // detach trailing punctuation
+  // punctuation always sticks to the word before it, so a lone 。 never starts a line
+  const parts = [];
+  String(m).trim().split(/\s+/).forEach(t => {
     const pm = t.match(/^(.+?)([。、？！?!]+)$/);
-    if (pm) return '<span style="white-space:nowrap">' + tokHTML(pm[1], opt) + tokHTML(pm[2], opt) + '</span>';
-    return tokHTML(t, opt);
-  }).join('') + '</span>';
+    const toks = pm ? [pm[1], pm[2]] : [t];
+    toks.forEach(x => {
+      if (PUNCT.test(x) && parts.length) parts[parts.length - 1] += tokHTML(x, opt);
+      else parts.push(tokHTML(x, opt));
+    });
+  });
+  return '<span class="jp">' + parts.map(h => /^<span class="(w|blank)/.test(h) && h.indexOf('</span><span') > 0 ? '<span class="nw">' + h + '</span>' : h).join('') + '</span>';
 }
 // reading for speech
 function R(m) {
@@ -573,14 +598,14 @@ function looseReading(numStr, k) {
 function autoFuri(root) {
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); const todo = [];
   let n; while ((n = w.nextNode())) {
-    if (!/[円階時分半今何人歳口一二三四五六七八九十百千万〇]/.test(n.textContent)) continue;
+    if (!/[\u3040-\u30ff\u4e00-\u9fff]/.test(n.textContent)) continue;
     let p = n.parentElement, skip = false;
-    while (p && p !== root.parentElement) { if (SKIP_FURI.has(p.tagName) || p.classList.contains('nofuri') || p.classList.contains('huge') || p.classList.contains('glyph') || p.classList.contains('opt') && p.classList.contains('jpbig')) { skip = true; break; } p = p.parentElement; }
+    while (p && p !== root.parentElement) { if (SKIP_FURI.has(p.tagName) || p.classList.contains('nw') || p.classList.contains('w') || p.classList.contains('nofuri') || p.classList.contains('huge') || p.classList.contains('glyph') || p.classList.contains('opt') && p.classList.contains('jpbig')) { skip = true; break; } p = p.parentElement; }
     if (!skip) todo.push(n);
   }
   todo.forEach(t => {
     const src = esc(t.textContent);
-    let html = src.replace(/何時/g, '\u0001').replace(/(\d{1,3}(?:[  ]\d{3})+|\d+)?([円階時分半今何人歳口])|([一二三四五六七八九十百千万〇]+)/g, (m, num, k, kn) => {
+    let html = src.replace(/[0-9\u3040-\u30ff\u4e00-\u9fff・ー〜。、！？!?]{2,16}/g, m => /[\u3040-\u30ff\u4e00-\u9fff]/.test(m) ? '<span class="nw">' + m + '</span>' : m).replace(/何時/g, '\u0001').replace(/(\d{1,3}(?:[  ]\d{3})+|\d+)?([円階時分半今何人歳口])|([一二三四五六七八九十百千万〇]+)/g, (m, num, k, kn) => {
       if (kn) return `<ruby>${kn}<rt>${readNum(k2n(kn)).replace('ゼロ', 'れい')}</rt></ruby>`;
       if (k === '円' && num) return `${num}<ruby>円<rt>えん</rt></ruby>`;
       const r = looseReading(num, k);
@@ -2513,6 +2538,87 @@ function verbGames() {
 }
 
 'use strict';
+/* ===================== custom sticker art (hand-drawn SVG, 100×100) ===================== */
+const _eyes = (x1, x2, y, r = 3.4) => `<circle cx="${x1}" cy="${y}" r="${r}" fill="#3A1F2A"/><circle cx="${x2}" cy="${y}" r="${r}" fill="#3A1F2A"/><circle cx="${x1 + 1.1}" cy="${y - 1.2}" r="${r * .38}" fill="#fff"/><circle cx="${x2 + 1.1}" cy="${y - 1.2}" r="${r * .38}" fill="#fff"/>`;
+const _blush = (x1, x2, y) => `<ellipse cx="${x1}" cy="${y}" rx="4.6" ry="2.8" fill="#FF7FA0" opacity=".7"/><ellipse cx="${x2}" cy="${y}" rx="4.6" ry="2.8" fill="#FF7FA0" opacity=".7"/>`;
+const _happy = (x1, x2, y) => `<path d="M${x1 - 3.5} ${y + 1}q3.5-4.5 7 0M${x2 - 3.5} ${y + 1}q3.5-4.5 7 0" stroke="#3A1F2A" stroke-width="2.6" fill="none" stroke-linecap="round"/>`;
+const _smile = (x, y, w = 7) => `<path d="M${x - w / 2} ${y}q${w / 2} ${w * .7} ${w} 0" stroke="#3A1F2A" stroke-width="2.6" fill="none" stroke-linecap="round"/>`;
+
+const STK_ART = {
+  // ролли — два роллика, один подмигивает, сверху палочки
+  rolli: `<svg viewBox="0 0 100 100"><line x1="52" y1="6" x2="97" y2="30" stroke="#C98A4B" stroke-width="4.5" stroke-linecap="round"/><line x1="46" y1="12" x2="94" y2="40" stroke="#B9783A" stroke-width="4.5" stroke-linecap="round"/>
+    <g><rect x="8" y="48" width="42" height="40" rx="9" fill="#24392C"/><ellipse cx="29" cy="49" rx="21" ry="10" fill="#FFFDF5" stroke="#24392C" stroke-width="3"/><ellipse cx="29" cy="49" rx="8.5" ry="4.2" fill="#FF8A5B"/><ellipse cx="25" cy="48" rx="2.4" ry="1.6" fill="#7BCF6A"/>
+    <circle cx="22" cy="66" r="3.4" fill="#fff"/><circle cx="36" cy="66" r="3.4" fill="#fff"/><circle cx="22.6" cy="66.6" r="1.7" fill="#24392C"/><circle cx="36.6" cy="66.6" r="1.7" fill="#24392C"/><path d="M25 74q4 4 8 0" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+    <ellipse cx="16" cy="73" rx="3.6" ry="2.2" fill="#FF7FA0" opacity=".8"/><ellipse cx="42" cy="73" rx="3.6" ry="2.2" fill="#FF7FA0" opacity=".8"/></g>
+    <g><rect x="50" y="42" width="42" height="40" rx="9" fill="#24392C"/><ellipse cx="71" cy="43" rx="21" ry="10" fill="#FFFDF5" stroke="#24392C" stroke-width="3"/><ellipse cx="71" cy="43" rx="8.5" ry="4.2" fill="#FFB347"/><ellipse cx="75" cy="42" rx="2.4" ry="1.6" fill="#7BCF6A"/>
+    <circle cx="64" cy="60" r="3.4" fill="#fff"/><circle cx="64.6" cy="60.6" r="1.7" fill="#24392C"/><path d="M74.5 60.5q3.5-3.5 7 0" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round"/><path d="M67 68q4 5 9 0" stroke="#fff" stroke-width="2.4" fill="#FF7FA0" stroke-linecap="round"/>
+    <ellipse cx="58" cy="67" rx="3.6" ry="2.2" fill="#FF7FA0" opacity=".8"/><ellipse cx="85" cy="67" rx="3.6" ry="2.2" fill="#FF7FA0" opacity=".8"/></g></svg>`,
+  // коли — газировка, которая только что громко рыгнула
+  koli: `<svg viewBox="0 0 100 100"><g fill="none" stroke="#7FD3FF" stroke-width="2.4"><circle cx="18" cy="24" r="4"/><circle cx="12" cy="40" r="2.6"/><circle cx="84" cy="20" r="3.2"/><circle cx="90" cy="34" r="2"/><circle cx="24" cy="10" r="2"/></g>
+    <rect x="29" y="14" width="42" height="76" rx="11" fill="#E8343E"/><rect x="29" y="14" width="42" height="76" rx="11" fill="url(#kolig)"/><defs><linearGradient id="kolig" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity=".25"/><stop offset=".35" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".12"/></linearGradient></defs>
+    <ellipse cx="50" cy="16" rx="20" ry="5" fill="#C9CED6"/><rect x="45" y="11" width="11" height="4" rx="2" fill="#9AA2AD"/><ellipse cx="50" cy="88" rx="20" ry="4" fill="#B91F2A"/>
+    <circle cx="50" cy="55" r="17" fill="#fff"/>
+    <path d="M39 49l5 3-5 3M61 49l-5 3 5 3" stroke="#3A1F2A" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <ellipse cx="50" cy="62" rx="6" ry="5" fill="#3A1F2A"/><ellipse cx="50" cy="64.5" rx="3.6" ry="2.4" fill="#FF7FA0"/>
+    <g stroke="#FF9A1F" stroke-width="3" stroke-linecap="round"><path d="M76 50l10-4M77 58h11M76 66l10 4"/></g></svg>`,
+  // мангоу — довольный манго с листиком
+  mangou: `<svg viewBox="0 0 100 100"><defs><linearGradient id="mangg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFD93D"/><stop offset=".6" stop-color="#FFA53A"/><stop offset="1" stop-color="#FF6F4A"/></linearGradient></defs>
+    <path d="M30 30C50 10 86 22 82 54 78 82 46 94 27 77 12 63 15 43 30 30Z" fill="url(#mangg)"/><path d="M33 36c4-4 10-6 15-5" stroke="#fff" stroke-opacity=".6" stroke-width="4" fill="none" stroke-linecap="round"/>
+    <path d="M52 20c-2-6 0-12 3-15" stroke="#8A5A2B" stroke-width="3.5" fill="none" stroke-linecap="round"/><path d="M55 12c8-8 22-8 28-2-8 7-20 9-28 2z" fill="#3DBB6A"/><path d="M58 11c7-3 15-3 21 0" stroke="#2A9A54" stroke-width="1.8" fill="none"/>
+    ${_happy(42, 62, 54)}${_blush(36, 69, 62)}<path d="M46 63q6 7 12 0" stroke="#3A1F2A" stroke-width="2.6" fill="#FF7FA0" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  // понча — пончик в шоке, дырка = открытый рот
+  poncha: `<svg viewBox="0 0 100 100"><circle cx="50" cy="54" r="40" fill="#E8B07A"/><circle cx="50" cy="54" r="40" fill="none" stroke="#C98A4B" stroke-width="3"/>
+    <path d="M14 50c0-20 16-34 36-34s36 14 36 34c0 6-4 4-6 9-2 6-7 3-9 8-3 5-8 0-12 4-4 4-7-1-11 2-5 3-8-2-12 0-5 2-8-4-12-2-5 2-9-6-10-12z" fill="#FF7FB0"/>
+    <g stroke-width="3.4" stroke-linecap="round"><path d="M24 34l4 3" stroke="#FFD93D"/><path d="M70 28l5 1" stroke="#7FD3FF"/><path d="M78 46l3 4" stroke="#fff"/><path d="M30 58l4-2" stroke="#7FD3FF"/><path d="M62 70l4 2" stroke="#FFD93D"/><path d="M45 24l4-2" stroke="#9A5CF0"/><path d="M20 48l3 3" stroke="#9A5CF0"/></g>
+    ${_eyes(38, 62, 38, 4.2)}<path d="M33 30l7-2M67 30l-7-2" stroke="#3A1F2A" stroke-width="2.4" stroke-linecap="round"/>
+    <ellipse cx="50" cy="57" rx="11" ry="12" fill="#5A2436"/><ellipse cx="50" cy="63" rx="6.5" ry="4.5" fill="#FF7FA0"/><ellipse cx="28" cy="48" rx="4.6" ry="2.8" fill="#FF4F86" opacity=".55"/><ellipse cx="72" cy="48" rx="4.6" ry="2.8" fill="#FF4F86" opacity=".55"/></svg>`,
+  // селёдкус — селёдка в тёмных очках, очень крутая
+  selyodkus: `<svg viewBox="0 0 100 100"><defs><linearGradient id="selg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5B7C99"/><stop offset=".55" stop-color="#A9C4D8"/><stop offset="1" stop-color="#E6F0F7"/></linearGradient></defs>
+    <path d="M78 50l18-16c2 10 2 22 0 32z" fill="#5B7C99"/><path d="M50 30l8-12 10 14z" fill="#5B7C99"/>
+    <path d="M8 52C16 30 46 24 66 30c10 3 15 12 15 20s-5 17-15 20C46 76 16 72 8 52z" fill="url(#selg)"/>
+    <path d="M44 34c-3 12-3 24 0 34" stroke="#5B7C99" stroke-opacity=".5" stroke-width="2" fill="none"/><path d="M54 38l6 4M54 46l6 4M56 54l6 4" stroke="#fff" stroke-opacity=".6" stroke-width="2" stroke-linecap="round"/>
+    <rect x="14" y="38" width="15" height="10" rx="4" fill="#1E1A24"/><rect x="31" y="38" width="15" height="10" rx="4" fill="#1E1A24"/><path d="M29 42h2M10 41l4 1" stroke="#1E1A24" stroke-width="2.4" stroke-linecap="round"/><path d="M17 40l4 0" stroke="#fff" stroke-opacity=".6" stroke-width="2" stroke-linecap="round"/>
+    <path d="M14 58q8 5 16 1" stroke="#3A1F2A" stroke-width="2.6" fill="none" stroke-linecap="round"/><path d="M30 58l3-2" stroke="#3A1F2A" stroke-width="2.6" stroke-linecap="round"/>
+    <path d="M84 16l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" fill="#FFD93D"/></svg>`,
+  // сухарии — три хрустящих сухарика, один уже откусан
+  suharii: `<svg viewBox="0 0 100 100"><g><rect x="10" y="44" width="34" height="34" rx="7" fill="#E9B565" stroke="#B9783A" stroke-width="3.5" transform="rotate(-10 27 61)"/>${_eyes(21, 33, 58, 3)}${_smile(27, 66, 7)}<circle cx="18" cy="68" r="1.6" fill="#B9783A"/></g>
+    <g><rect x="56" y="48" width="34" height="34" rx="7" fill="#E9B565" stroke="#B9783A" stroke-width="3.5" transform="rotate(12 73 65)"/><path d="M80 47c4 2 8 6 10 10-5 0-7-4-10-4z" fill="#FDEFF4"/><path d="M80 47c4 2 8 6 10 10" stroke="#B9783A" stroke-width="3" fill="none"/>
+      ${_eyes(67, 79, 63, 3)}<ellipse cx="73" cy="72" rx="3.4" ry="4" fill="#3A1F2A"/></g>
+    <g><rect x="32" y="12" width="34" height="34" rx="7" fill="#F0C277" stroke="#B9783A" stroke-width="3.5" transform="rotate(4 49 29)"/>${_happy(43, 55, 28)}${_smile(49, 36, 8)}<circle cx="38" cy="20" r="1.6" fill="#B9783A"/><circle cx="60" cy="38" r="1.6" fill="#B9783A"/></g>
+    <g fill="#E0A04F"><circle cx="90" cy="86" r="2"/><circle cx="84" cy="92" r="1.5"/><circle cx="94" cy="76" r="1.4"/></g></svg>`,
+  // вкусняк — шоколадка с глазами-сердечками и откусанным уголком
+  vkusnyak: `<svg viewBox="0 0 100 100"><g transform="translate(50 52) scale(.84) rotate(-12) translate(-50 -52)"><rect x="24" y="10" width="52" height="82" rx="7" fill="#7A4428"/>
+    <g stroke="#5E301B" stroke-width="2.4"><path d="M24 30h52M24 50h52M50 10v40"/></g><g fill="#94573A"><rect x="28" y="14" width="18" height="12" rx="3"/><rect x="54" y="14" width="18" height="12" rx="3"/><rect x="28" y="34" width="18" height="12" rx="3"/><rect x="54" y="34" width="18" height="12" rx="3"/></g>
+    <circle cx="76" cy="12" r="7" fill="var(--bg2)"/><circle cx="70" cy="9" r="5" fill="var(--bg2)"/>
+    <path d="M20 54l6 4 6-4 6 4 6-4 6 4 6-4 6 4 6-4 6 4 6-4 6 4v40H20z" fill="#9A5CF0"/><path d="M20 54l6 4 6-4 6 4 6-4 6 4 6-4 6 4 6-4 6 4 6-4 6 4" stroke="#D9DDE3" stroke-width="3" fill="none"/>
+    <path d="M34 26c-3-4 3-7 4-2 1-5 7-2 4 2l-4 4z" fill="#FF4F86"/><path d="M58 26c-3-4 3-7 4-2 1-5 7-2 4 2l-4 4z" fill="#FF4F86"/>
+    <path d="M43 38q7 7 14 0" stroke="#3A1F2A" stroke-width="2.6" fill="#FF7FA0" stroke-linecap="round"/><path d="M56 41q1 5-1 7" stroke="#7FD3FF" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+    <circle cx="50" cy="74" r="8" fill="#FFD93D"/><path d="M46 74l3 3 5-6" stroke="#9A5CF0" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></g></svg>`,
+  // кофи — сонная чашка: один глаз ещё спит
+  kofi: `<svg viewBox="0 0 100 100"><g fill="none" stroke="#C9B6A6" stroke-width="3" stroke-linecap="round"><path d="M38 22c-4-5 4-8 0-14"/><path d="M52 20c-4-5 4-8 0-14"/></g>
+    <text x="66" y="22" font-size="14" font-weight="900" fill="#9A5CF0" font-family="Nunito,sans-serif">z</text><text x="76" y="12" font-size="10" font-weight="900" fill="#9A5CF0" font-family="Nunito,sans-serif">z</text>
+    <ellipse cx="48" cy="86" rx="38" ry="8" fill="#FFD0A8"/><path d="M74 44c12-2 16 6 14 12s-10 9-16 7" stroke="#F4E6D8" stroke-width="7" fill="none"/><path d="M74 44c12-2 16 6 14 12s-10 9-16 7" stroke="#D9C2AC" stroke-width="2" fill="none"/>
+    <path d="M18 36h60l-6 42c-1 6-6 9-12 9H36c-6 0-11-3-12-9z" fill="#F4E6D8"/><ellipse cx="48" cy="36" rx="30" ry="7" fill="#6B3E26"/><ellipse cx="42" cy="35" rx="8" ry="2" fill="#8E5A3A"/>
+    <path d="M34 56q4-3 8 0" stroke="#3A1F2A" stroke-width="2.6" fill="none" stroke-linecap="round"/><circle cx="58" cy="56" r="4" fill="#3A1F2A"/><circle cx="59.2" cy="54.6" r="1.4" fill="#fff"/>
+    <path d="M43 68q3-2 6 0t6 0" stroke="#3A1F2A" stroke-width="2.4" fill="none" stroke-linecap="round"/>${_blush(30, 66, 63)}</svg>`,
+  // ферерка — золотая конфетка в гофрированной юбочке, сияет
+  fererka: `<svg viewBox="0 0 100 100"><defs><radialGradient id="ferg" cx=".35" cy=".3" r=".75"><stop offset="0" stop-color="#FFF4B8"/><stop offset=".45" stop-color="#F6C847"/><stop offset="1" stop-color="#C98A12"/></radialGradient></defs>
+    <path d="M18 62h64l-7 28H25z" fill="#8A5A2B"/><g stroke="#6B421C" stroke-width="2"><path d="M26 62l3 28M34 62l2 28M42 62l1 28M50 62v28M58 62l-1 28M66 62l-2 28M74 62l-3 28"/></g>
+    <circle cx="50" cy="48" r="30" fill="url(#ferg)"/><g stroke="#C98A12" stroke-opacity=".55" stroke-width="1.6" fill="none" stroke-linecap="round"><path d="M28 40l6 3-3 5M70 36l-5 4 4 4M36 66l4-4 3 4M62 64l2-5 4 3M48 22l2 5 3-3"/></g>
+    <path d="M35 34q4-6 11-6" stroke="#fff" stroke-width="3.5" fill="none" stroke-linecap="round" opacity=".8"/>
+    ${_eyes(41, 59, 48, 3.6)}<path d="M40.5 42.5l1 2M58.5 42.5l1 2" stroke="#fff" stroke-width="1"/>${_smile(50, 56, 8)}${_blush(34, 66, 55)}
+    <g fill="#FFD93D"><path d="M86 22l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/><path d="M12 30l1.5 3.5 3.5 1.5-3.5 1.5L12 40l-1.5-3.5L7 35l3.5-1.5z"/><path d="M84 66l1.2 3 3 1.2-3 1.2-1.2 3-1.2-3-3-1.2 3-1.2z"/></g></svg>`,
+  // чаёкс — довольная чашка чая с пакетиком и паром-сердечком
+  chayoks: `<svg viewBox="0 0 100 100"><path d="M44 18c-6-6-14 2-6 8l6 5 6-5c8-6 0-14-6-8z" fill="#FF7FB0" opacity=".85"/>
+    <ellipse cx="48" cy="88" rx="38" ry="7" fill="#BDE8D1"/><path d="M72 48c11-1 15 6 13 11s-9 8-15 6" stroke="#fff" stroke-width="7" fill="none"/><path d="M72 48c11-1 15 6 13 11s-9 8-15 6" stroke="#CFE3DA" stroke-width="2" fill="none"/>
+    <path d="M16 40h62l-6 38c-1 6-6 9-12 9H34c-6 0-11-3-12-9z" fill="#fff" stroke="#CFE3DA" stroke-width="2"/><ellipse cx="47" cy="40" rx="31" ry="7" fill="#E3A23B"/><ellipse cx="40" cy="39" rx="8" ry="2" fill="#F2C063"/>
+    <path d="M64 38c0-8 4-14 10-18" stroke="#9AA2AD" stroke-width="1.6" fill="none"/><rect x="70" y="10" width="14" height="14" rx="3" fill="#3DBB6A"/><path d="M74 20c1-5 5-7 7-7-1 3-3 6-7 7z" fill="#fff"/>
+    ${_happy(38, 56, 58)}${_blush(31, 63, 65)}${_smile(47, 66, 8)}<path d="M28 50c3-1 6-1 9 0" stroke="#fff" stroke-opacity=".5" stroke-width="2" fill="none"/></svg>`,
+};
+// render a sticker picture: emoji or custom art
+const stkPic = s => s[0].startsWith('svg:') ? STK_ART[s[0].slice(4)] : s[0];
+
+'use strict';
 /* ===================== APP: units, router, home, progress, shop, settings ===================== */
 const UNITS = [
   { id: 'hira', title: 'Хирагана', jp: 'ひらがな', badge: 'あ', color: 'var(--pink)', group: 'Азбука', desc: 'Первая японская азбука: 46 знаков, точки и слияния', kana: 'h', lesson: hiraLesson, games: () => kanaGames('h') },
@@ -2533,10 +2639,15 @@ function unitProgress(u) {
   return Math.round((S().lessons[u.id] ? 15 : 0) + 85 * s / (3 * gs.length));
 }
 
-const STICKERS = [['🐱', 'ねこ', 'кошка', 20], ['🐶', 'いぬ', 'собака', 20], ['🦊', 'きつね', 'лиса', 30], ['🐼', 'パンダ', 'панда', 30], ['🍣', 'すし', 'суши', 40], ['🍙', 'おにぎり', 'онигири', 40],
-  ['🍡', 'だんご', 'данго', 50], ['🍵', 'まっちゃ', 'матча', 50], ['🌸', 'さくら', 'сакура', 60], ['🗻', '富士山[ふじさん]', 'гора Фудзи', 80], ['⛩️', 'じんじゃ', 'синтоистский храм', 80], ['🎏', 'こいのぼり', 'флажки-карпы', 90],
-  ['🍜', 'ラーメン', 'рамэн', 100], ['🦀', 'かに', 'краб', 100], ['🎐', 'ふうりん', 'колокольчик ветра', 120], ['🐉', 'りゅう', 'дракон', 150], ['👘', 'きもの', 'кимоно', 150], ['🏯', 'おしろ', 'японский замок', 200]];
-STICKERS.forEach(s => { const p = parseTok(s[1]); if (!GL[p.s]) GL[p.s] = { r: p.r, g: s[2] }; });
+const STICKERS = [['🐱', 'ねこ', 'кошка', 20], ['🐶', 'いぬ', 'собака', 20], ['🦊', 'きつね', 'лиса', 30], ['🐼', 'パンダ', 'панда', 30],
+  ['svg:kofi', 'コーヒー', 'кофе', 30, 'кофи'], ['svg:chayoks', 'こうちゃ', 'чай', 30, 'чаёкс'], ['🍙', 'おにぎり', 'онигири', 40], ['svg:koli', 'コーラ', 'кола', 40, 'коли'],
+  ['svg:poncha', 'ドーナツ', 'пончик', 50, 'понча'], ['svg:suharii', 'ラスク', 'сухарики', 50, 'сухарии'], ['🍡', 'だんご', 'данго', 50], ['svg:mangou', 'マンゴー', 'манго', 60, 'мангоу'],
+  ['svg:rolli', 'まきずし', 'роллы', 70, 'ролли'], ['🌸', 'さくら', 'сакура', 60], ['svg:vkusnyak', 'チョコ', 'шоколадка', 80, 'вкусняк'], ['🗻', '富士山[ふじさん]', 'гора Фудзи', 80],
+  ['⛩️', 'じんじゃ', 'синтоистский храм', 80], ['🎏', 'こいのぼり', 'флажки-карпы', 90], ['svg:fererka', 'キャンディー', 'конфета', 100, 'ферерка'], ['🍜', 'ラーメン', 'рамэн', 100],
+  ['🦀', 'かに', 'краб', 100], ['🎐', 'ふうりん', 'колокольчик ветра', 120], ['svg:selyodkus', 'にしん', 'селёдка', 130, 'селёдкус'], ['🐉', 'りゅう', 'дракон', 150],
+  ['👘', 'きもの', 'кимоно', 150], ['🏯', 'おしろ', 'японский замок', 200]];
+STICKERS.forEach(s => { const p = parseTok(s[1]); if (!GL[p.s] || s[4]) GL[p.s] = Object.assign({}, GL[p.s] || {}, { r: p.r || (GL[p.s] || {}).r || null, g: s[2] + (s[4] ? ` (у нас — «${s[4]}»)` : '') }); });
+const stkCard = (s, extra) => `<div class="stk ${extra.locked ? 'locked' : ''}">${s[4] && !extra.owned ? '<span class="stk-new">новое</span>' : ''}<span class="e">${stkPic(s)}</span><b>${J(s[1])}</b>${s[4] ? `<span class="nick">«${s[4]}»</span>` : ''}<small class="muted">${s[2]}</small>${extra.foot || ''}</div>`;
 
 const App = {
   view: null, tab: {},
@@ -2639,19 +2750,18 @@ const App = {
       <h2 style="font-size:20px">Катакана</h2><div class="row" style="gap:4px">${cellRow(KATA_BASIC.map(x => x[0]))}</div>
       <div class="small muted" style="font-weight:700">Серый — ещё не встречался, оранжевый — учу, жёлтый — почти, зелёный — знаю.</div></div>
       <div class="card stack"><h2 style="font-size:20px">Разделы</h2>${UNITS.map(u => `<div><div class="row" style="justify-content:space-between"><b>${u.title}</b><span class="step-n">${unitProgress(u)}%</span></div><div class="bar" style="--c:${u.color}"><i style="width:${unitProgress(u)}%"></i></div></div>`).join('')}</div>
-      <div class="card stack"><h2 style="font-size:20px">Мои наклейки</h2>${own.size ? `<div class="stickers">${STICKERS.filter(s => own.has(s[0])).map(s => `<div class="stk"><span class="e">${s[0]}</span><b>${J(s[1])}</b><small class="muted">${s[2]}</small></div>`).join('')}</div>` : '<p class="muted" style="font-weight:700">Пока пусто. Загляни в <a href="#shop">лавку наклеек</a>!</p>'}</div></div>`;
+      <div class="card stack"><h2 style="font-size:20px">Мои наклейки</h2>${own.size ? `<div class="stickers">${STICKERS.filter(s => own.has(s[0])).map(s => stkCard(s, { owned: true })).join('')}</div>` : '<p class="muted" style="font-weight:700">Пока пусто. Загляни в <a href="#shop">лавку наклеек</a>!</p>'}</div></div>`;
   },
   shopPage(m) {
     const own = new Set(S().stickers);
     m.innerHTML = `<div class="stack"><div class="band" style="background:var(--green)"><span class="big">店</span><h1>Лавка наклеек</h1><p>Обменивай чипси на наклейки. Каждая наклейка — новое японское слово: нажми на него!</p></div>
       <div class="card row" style="justify-content:space-between"><b>У тебя:</b><span class="earn" style="font-size:20px">${chipSVG()}${S().chips} чипси</span></div>
-      <div class="stickers">${STICKERS.map((s, i) => `<div class="stk ${own.has(s[0]) ? '' : 'locked'}"><span class="e">${s[0]}</span><b>${J(s[1])}</b><small class="muted">${s[2]}</small>
-        ${own.has(s[0]) ? '<small style="color:var(--ok)">✓ твоя</small>' : `<button class="btn sm" style="--c:${S().chips >= s[3] ? 'var(--orange)' : 'var(--muted)'}" data-buy="${i}">${s[3]} чипси</button>`}</div>`).join('')}</div></div>`;
+      <div class="stickers">${STICKERS.map((s, i) => stkCard(s, { owned: own.has(s[0]), locked: !own.has(s[0]), foot: own.has(s[0]) ? '<small style="color:var(--ok)">✓ твоя</small>' : `<button class="btn sm" style="--c:${S().chips >= s[3] ? 'var(--orange)' : 'var(--muted)'}" data-buy="${i}">${s[3]} чипси</button>` })).join('')}</div></div>`;
     $$('[data-buy]', m).forEach(b => b.onclick = () => {
       const s = STICKERS[+b.dataset.buy];
       if (S().chips < s[3]) { toast(`Нужно ещё ${s[3] - S().chips} чипси — поиграй немножко!`); Snd.bad(); return; }
       S().chips -= s[3]; S().stickers.push(s[0]); Store.save(); renderChips(); Snd.win(); Voice.say(R(s[1]));
-      toast(`Наклейка «${s[2]}» теперь твоя!`); this.shopPage(m);
+      toast(`Наклейка «${s[4] || s[2]}» теперь твоя!`); this.shopPage(m);
     });
   },
   settingsPage(m) {
